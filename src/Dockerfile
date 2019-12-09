@@ -54,4 +54,4 @@ WORKDIR /app
 
 EXPOSE 5707
 
-CMD twistd --nodaemon --python=fosafp.py
+ENTRYPOINT ["python3", "fosafp.py"]

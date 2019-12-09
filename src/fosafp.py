@@ -3,8 +3,8 @@
 from functools import partial
 
 from twisted.application import service
+from twisted.python import log
 from twisted.web import server
-from twisted.web.static import File
 from twisted.web.resource import Resource
 from twisted.internet import reactor
 
@@ -27,7 +27,7 @@ NAMESPACES = {
     'xsi': "http://www.w3.org/2001/XMLSchema-instance",
 }
 
-import farmOS, json, re
+import farmOS, re, sys, argparse
 
 from itertools import chain
 
@@ -198,13 +198,12 @@ def to_type_filtered_feature_members(type_name, features):
 class FarmOsAreaFeatureProxy(Resource):
     isLeaf = True
 
-    def __init__(self):
+    def __init__(self, farm_os_url):
         Resource.__init__(self)
+        self._farm_os_url = farm_os_url
 
     def render_GET(self, request):
         args = {k.lower(): v for k, v in request.args.items()}
-
-        print(args)
 
         request_type = args.get(b'request')[0]
 
@@ -217,11 +216,11 @@ class FarmOsAreaFeatureProxy(Resource):
             doc = self._get_feature(request, args)
 
         if not doc is None:
-            request.setHeader('Content-Type', 'text/xml')
+            request.setHeader('Content-Type', WFS_MIMETYPE)
             request.setResponseCode(code=200)
             etree.cleanup_namespaces(doc)
             return etree.tostring(doc, pretty_print=True)
-        
+
     def render_POST(self, request):
         args = {k.lower(): v for k, v in request.args.items()}
 
@@ -232,7 +231,7 @@ class FarmOsAreaFeatureProxy(Resource):
     def _get_feature(self, request, args):
         type_name = args.get(b'typename')[0].decode('utf-8')
 
-        farm = farmOS.farmOS('http://172.17.0.2', request.getUser(), request.getPassword())
+        farm = farmOS.farmOS(self._farm_os_url, request.getUser(), request.getPassword())
         farm.authenticate()
 
         areas = farm.session.http_request("farm/areas/geojson").json()
@@ -247,13 +246,6 @@ class FarmOsAreaFeatureProxy(Resource):
                                           WFS_MIMETYPE=WFS_MIMETYPE,
                                           GML_VERSION=GML_VERSION,
                                           type_name=type_name)),
-            gml.boundedBy(
-                gml.Envelope(
-                    gml.lowerCorner("-122.9273871146143 48.6652415209444"),
-                    gml.upperCorner("-122.9273381642997 48.6652226989178"),
-                    srsName=WFS_PROJECTION
-                )
-            ),
             *type_filtered_feature_members
         )
 
@@ -309,62 +301,46 @@ class FarmOsAreaFeatureProxy(Resource):
             ),
             E.FeatureTypeList(
                 E.Operations(E.Query, E.Insert, E.Unsert, E.Delete, E.Lock),
-                E.FeatureType(
-                    E.Name("farm_os_features_point"),
-                    E.Title("FarmOS point features"),
-                    E.DefaultSRS(WFS_PROJECTION),
-                    E.OutputFormats(
-                        E.Format("{WFS_MIMETYPE}; subtype={GML_VERSION}".format(WFS_MIMETYPE=WFS_MIMETYPE, GML_VERSION=GML_VERSION))
-                    ),
-                    ows.WGS84BoundingBox(
-                        ows.LowerCorner("-122.9273871146143 48.6652415209444"),
-                        ows.UpperCorner("-122.9273381642997 48.6652226989178"),
-                        dimensions="2"
-                    )
-                ),
-                E.FeatureType(
-                    E.Name("farm_os_features_polygon"),
-                    E.Title("FarmOS polygon features"),
-                    E.DefaultSRS(WFS_PROJECTION),
-                    E.OutputFormats(
-                        E.Format("{WFS_MIMETYPE}; subtype={GML_VERSION}".format(WFS_MIMETYPE=WFS_MIMETYPE, GML_VERSION=GML_VERSION))
-                    ),
-                    ows.WGS84BoundingBox(
-                        ows.LowerCorner("-122.9273871146143 48.6652415209444"),
-                        ows.UpperCorner("-122.9273381642997 48.6652226989178"),
-                        dimensions="2"
-                    )
-                ),
-                E.FeatureType(
-                    E.Name("farm_os_features_line_string"),
-                    E.Title("FarmOS line string features"),
-                    E.DefaultSRS(WFS_PROJECTION),
-                    E.OutputFormats(
-                        E.Format("{WFS_MIMETYPE}; subtype={GML_VERSION}".format(WFS_MIMETYPE=WFS_MIMETYPE, GML_VERSION=GML_VERSION))
-                    ),
-                    ows.WGS84BoundingBox(
-                        ows.LowerCorner("-122.9273871146143 48.6652415209444"),
-                        ows.UpperCorner("-122.9273381642997 48.6652226989178"),
-                        dimensions="2"
-                    )
-                )
+                *[ E.FeatureType(
+                        E.Name("farm_os_features_{}".format(type_name)),
+                        E.Title("FarmOS {} features".format(type_name.replace('_', ' '))),
+                        E.DefaultSRS(WFS_PROJECTION),
+                        E.OutputFormats(
+                            E.Format("{WFS_MIMETYPE}; subtype={GML_VERSION}".format(WFS_MIMETYPE=WFS_MIMETYPE, GML_VERSION=GML_VERSION))
+                        )
+                    ) for type_name in ('point', 'polygon', 'point_string') ]
             ),
             version=WFS_PROTOCOL_VERSION
         )
 
 
 class FarmOsAreaFeatureProxyService(service.Service):
-
-    def __init__(self, portNum):
-        self.portNum = portNum
+    def __init__(self, port_num, farm_os_url):
+        self._port_num = port_num
+        self._farm_os_url = farm_os_url
 
     def startService(self):
-        self._port = reactor.listenTCP(self.portNum, server.Site(FarmOsAreaFeatureProxy()))
+        self._port = reactor.listenTCP(self._port_num, server.Site(FarmOsAreaFeatureProxy(self._farm_os_url)))
 
     def stopService(self):
         return self._port.stopListening()
 
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--farm-os-url", help="The url for connecting to FarmOS", type=str, default='http://localhost:80')
+    args = parser.parse_args()
 
-application = service.Application('FarmOsAreaFeatureProxy')
-service = FarmOsAreaFeatureProxyService(5707)
-service.setServiceParent(application)
+    print(sys.argv)
+    print(args)
+
+    log.startLogging(sys.stdout)
+
+    application = service.Application("FarmOsAreaFeatureProxy")
+    service = FarmOsAreaFeatureProxyService(5707, args.farm_os_url)
+    service.setServiceParent(application)
+
+    service.startService()
+    try:
+        reactor.run()
+    finally:
+        service.stopService()
