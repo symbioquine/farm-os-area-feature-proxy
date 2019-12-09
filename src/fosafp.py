@@ -131,7 +131,7 @@ class PolygonFeatureMemberFactory(object):
                         srsName=WFS_PROJECTION
                     )
                 ),
-                ms.site_name(area_name),
+                ms.area_name(area_name),
                 nsAttr.gml.id("{type_name}.{area_id}".format(type_name=type_name, area_id=area_id))
             )
         )
@@ -166,7 +166,7 @@ class PointStringFeatureMemberFactory(object):
                         srsName=WFS_PROJECTION
                     )
                 ),
-                ms.site_name(area_name),
+                ms.area_name(area_name),
                 nsAttr.gml.id("{type_name}.{area_id}".format(type_name=type_name, area_id=area_id))
             )
         )
@@ -252,6 +252,12 @@ class FarmOsAreaFeatureProxy(Resource):
     def _describe_feature_type(self, args):
         type_name = args.get(b'typename')[0].decode('utf-8')
 
+        geometry_type = {
+            'farm_os_features_point': 'PointPropertyType',
+            'farm_os_features_polygon': 'PolygonPropertyType',
+            'farm_os_features_line_string': 'LineStringPropertyType'
+        }.get(type_name, 'GeometryPropertyType')
+
         return bare.schema(
             E("import",
                 namespace=ns.gml,
@@ -266,7 +272,7 @@ class FarmOsAreaFeatureProxy(Resource):
                 E.complexContent(
                     E.extension(
                         E.sequence(
-                            E.element(name="geometry", type="gml:GeometryPropertyType", minOccurs="0", maxOccurs="1"),
+                            E.element(name="geometry", type="gml:" + geometry_type, minOccurs="0", maxOccurs="1"),
                             E.element(name="area_name", type="string")
                         ),
                         base="gml:AbstractFeatureType"
@@ -300,7 +306,7 @@ class FarmOsAreaFeatureProxy(Resource):
                 )
             ),
             E.FeatureTypeList(
-                E.Operations(E.Query, E.Insert, E.Unsert, E.Delete, E.Lock),
+                E.Operations(E.Query, E.Insert, E.Update, E.Delete, E.Lock),
                 *[ E.FeatureType(
                         E.Name("farm_os_features_{}".format(type_name)),
                         E.Title("FarmOS {} features".format(type_name.replace('_', ' '))),
@@ -308,7 +314,7 @@ class FarmOsAreaFeatureProxy(Resource):
                         E.OutputFormats(
                             E.Format("{WFS_MIMETYPE}; subtype={GML_VERSION}".format(WFS_MIMETYPE=WFS_MIMETYPE, GML_VERSION=GML_VERSION))
                         )
-                    ) for type_name in ('point', 'polygon', 'point_string') ]
+                    ) for type_name in ('point', 'polygon', 'line_string') ]
             ),
             version=WFS_PROTOCOL_VERSION
         )
