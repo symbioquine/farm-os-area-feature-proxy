@@ -13,6 +13,8 @@ from lxml.builder import E, ElementMaker  # lxml only !
 
 WFS_PROTOCOL_VERSION = "1.1.0"
 WFS_PROJECTION = "EPSG:4326"
+WFS_MIMETYPE = "text/xml"
+GML_VERSION = "gml/3.1.1"
 
 NAMESPACES = {
     'gml': "http://www.opengis.net/gml",
@@ -96,12 +98,22 @@ class FarmOsAreaFeatureProxy(Resource):
             request.setResponseCode(code=200)
             etree.cleanup_namespaces(doc)
             return etree.tostring(doc, pretty_print=True)
+        
+    def render_POST(self, request):
+        args = {k.lower(): v for k, v in request.args.items()}
+
+        print(args)
+
+        print(request.content.read())
 
     def _get_feature(self, request):
         return wfs.FeatureCollection(
-            nsAttr.xsi.schemaLocation("http://mapserver.gis.umn.edu/mapserver "
-                                      + "http://localhost:5707?SERVICE=WFS&VERSION=1.1.0&REQUEST=DescribeFeatureType&TYPENAME=antarctic_ice_shelves_fill&OUTPUTFORMAT=text/xml; "
-                                      + "subtype=gml/3.1.1 http://www.opengis.net/wfs http://schemas.opengis.net/wfs/1.1.0/wfs.xsd"),
+            nsAttr.xsi.schemaLocation(("http://mapserver.gis.umn.edu/mapserver "
+                                      + "http://localhost:5707?SERVICE=WFS&VERSION={WFS_PROTOCOL_VERSION}&REQUEST=DescribeFeatureType&TYPENAME=antarctic_ice_shelves_fill&OUTPUTFORMAT={WFS_MIMETYPE}; "
+                                      + "subtype={GML_VERSION} http://www.opengis.net/wfs http://schemas.opengis.net/wfs/{WFS_PROTOCOL_VERSION}/wfs.xsd").format(
+                                          WFS_PROTOCOL_VERSION=WFS_PROTOCOL_VERSION,
+                                          WFS_MIMETYPE=WFS_MIMETYPE,
+                                          GML_VERSION=GML_VERSION)),
             gml.boundedBy(
                 gml.Envelope(
                     gml.lowerCorner("-122.9273871146143 48.6652415209444"),
@@ -166,7 +178,7 @@ class FarmOsAreaFeatureProxy(Resource):
         return bare.schema(
             E("import",
                 namespace=ns.gml,
-                schemaLocation="http://schemas.opengis.net/gml/3.1.1/base/gml.xsd"
+                schemaLocation="http://schemas.opengis.net/{GML_VERSION}/base/gml.xsd".format(GML_VERSION=GML_VERSION)
             ),
             E.element(
                 name="antarctic_ice_shelves_fill",
@@ -206,12 +218,12 @@ class FarmOsAreaFeatureProxy(Resource):
                     name="AcceptVersions"
                 ),
                 ows.Parameter(
-                    ows.Value("text/xml"),
+                    ows.Value(WFS_MIMETYPE),
                     name="AcceptFormats"
                 )
             ),
             E.FeatureTypeList(
-                E.Operations("Query"),
+                E.Operations(E.Query, E.Insert, E.Unsert, E.Delete, E.Lock),
                 E.FeatureType(
                     E.Name("antarctic_ice_shelves_fill"),
                     E.Title("Antarctic ice shelves"),
@@ -221,7 +233,7 @@ class FarmOsAreaFeatureProxy(Resource):
                     ),
                     E.DefaultSRS(WFS_PROJECTION),
                     E.OutputFormats(
-                        E.Format("text/xml; subtype=gml/3.1.1")
+                        E.Format("{WFS_MIMETYPE}; subtype={GML_VERSION}".format(WFS_MIMETYPE=WFS_MIMETYPE, GML_VERSION=GML_VERSION))
                     ),
                     ows.WGS84BoundingBox(
                         ows.LowerCorner("-122.9273871146143 48.6652415209444"),
