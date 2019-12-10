@@ -202,6 +202,19 @@ class FarmOsAreaFeatureProxy(Resource):
         Resource.__init__(self)
         self._farm_os_url = farm_os_url
 
+        print("before farmOS calls")
+
+        farm = farmOS.farmOS(self._farm_os_url, "FarmOS.restws.zero", "zsARb1hZjFwK0jMIh3Td")
+        farm.authenticate()
+
+        #areas = farm.session.http_request("/taxonomy_term.json?bundle=farm_areas&field_farm_area_type=Field")
+
+        #print(areas.json())
+
+        print(farm.area.get())
+
+        print("after farmOS calls")
+
     def render_GET(self, request):
         args = {k.lower(): v for k, v in request.args.items()}
 

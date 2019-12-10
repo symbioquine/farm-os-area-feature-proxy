@@ -5,11 +5,18 @@ farm-os-area-feature-proxy is a stand-alone proxy which makes a standard FarmOS 
 ## Getting Started
 
 ```bash
-docker run --rm -p 5707:5707 -it $(docker build -q src/) --farm-os-url=http://172.17.0.2:123
+docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 -it $(docker build -q src/) --farm-os-url=http://172.17.0.2:123
+```
+
+Or when running against the [FarmOS development docker-compose](https://farmos.org/development/docker/) environment;
+
+```bash
+docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os-development_default -it $(docker build -q src/) --farm-os-url=http://www
 ```
 
 ## Future Work
 
+* Update to use actual python API rather than the geojson endpoints
 * Implement editing
 * Implement caching of FarmOS login sessions
 * Improve error handling
