@@ -29,7 +29,7 @@ NAMESPACES = {
 
 import farmOS, re, sys, argparse
 
-from itertools import chain
+from osgeo import ogr, osr
 
 class DictAccessor(object):
     def __init__(self, d):
@@ -51,7 +51,6 @@ def attr(name, value):
 def ns_attr_partial(namespace):
     return PartialAccessor(lambda attr_name, attr_value: attr("{{{namespace}}}{attr_name}".format(namespace=namespace, attr_name=attr_name), attr_value))
 
-
 ns = DictAccessor(NAMESPACES)
 nsE = DictAccessor({k: ElementMaker(namespace=v, nsmap=NAMESPACES) for k, v in NAMESPACES.items()})
 nsAttr = DictAccessor({k: ns_attr_partial(v) for k, v in NAMESPACES.items()})
@@ -62,138 +61,52 @@ ows = nsE.ows
 gml = nsE.gml
 ms = nsE.ms
 
-
-AREA_DESCRIPTION_ID_PATTERN = re.compile('area-details-(\\d+)')
-
-class PointFeatureMemberFactory(object):
-    relevant_type_name = "Point"
-
-    def to_feature_member(self, type_name, feature):
-        geometry = feature.get('geometry', {})
-        properties = feature.get('properties', {})
-
-        area_name = etree.fromstring(properties.get('name', '')).text
-        area_id_match = AREA_DESCRIPTION_ID_PATTERN.match(objectify.fromstring(properties.get('description', '')).get('id'))
-
-        if not area_id_match:
-            return None
-
-        area_id = area_id_match.group(1)
-
-        coordinates = geometry.get('coordinates', None)
-
-        return gml.featureMember(
-            ms.farm_os_features_point(
-                ms.geometry(
-                    gml.Point(
-                        gml.pos(
-                            "{} {}".format(coordinates[0], coordinates[1])
-                        ),
-                        srsName=WFS_PROJECTION
-                    )
-                ),
-                ms.area_name(area_name),
-                nsAttr.gml.id("{type_name}.{area_id}".format(type_name=type_name, area_id=area_id))
-            )
-        )
-
-class PolygonFeatureMemberFactory(object):
-    relevant_type_name = "Polygon"
-
-    def to_feature_member(self, type_name, feature):
-        geometry = feature.get('geometry', {})
-        properties = feature.get('properties', {})
-
-        area_name = etree.fromstring(properties.get('name', '')).text
-        area_id_match = AREA_DESCRIPTION_ID_PATTERN.match(objectify.fromstring(properties.get('description', '')).get('id'))
-
-        if not area_id_match:
-            return None
-
-        area_id = area_id_match.group(1)
-
-        coordinates = geometry.get('coordinates', [])
-
-        pos_list = " ".join(map(str, (chain.from_iterable(chain.from_iterable(coordinates)))))
-
-        return gml.featureMember(
-            ms.farm_os_features_polygon(
-                ms.geometry(
-                    gml.Polygon(
-                        gml.exterior(
-                            gml.LinearRing(
-                                gml.posList(
-                                    pos_list,
-                                    srsDimension="2"
-                                )
-                            )
-                        ),
-                        srsName=WFS_PROJECTION
-                    )
-                ),
-                ms.area_name(area_name),
-                nsAttr.gml.id("{type_name}.{area_id}".format(type_name=type_name, area_id=area_id))
-            )
-        )
-
-class PointStringFeatureMemberFactory(object):
-    relevant_type_name = "LineString"
-
-    def to_feature_member(self, type_name, feature):
-        geometry = feature.get('geometry', {})
-        properties = feature.get('properties', {})
-
-        area_name = etree.fromstring(properties.get('name', '')).text
-        area_id_match = AREA_DESCRIPTION_ID_PATTERN.match(objectify.fromstring(properties.get('description', '')).get('id'))
-
-        if not area_id_match:
-            return None
-
-        area_id = area_id_match.group(1)
-
-        coordinates = geometry.get('coordinates', [])
-
-        pos_list = " ".join(map(str, (chain.from_iterable(coordinates))))
-
-        return gml.featureMember(
-            ms.farm_os_features_line_string(
-                ms.geometry(
-                    gml.LineString(
-                        gml.posList(
-                            pos_list,
-                            srsDimension="2"
-                        ),
-                        srsName=WFS_PROJECTION
-                    )
-                ),
-                ms.area_name(area_name),
-                nsAttr.gml.id("{type_name}.{area_id}".format(type_name=type_name, area_id=area_id))
-            )
-        )
-
-FEATURE_MEMBER_FACTORIES = {
-    'farm_os_features_point': PointFeatureMemberFactory(),
-    'farm_os_features_polygon': PolygonFeatureMemberFactory(),
-    'farm_os_features_line_string': PointStringFeatureMemberFactory()
+FEATURE_MEMBER_GEO_TYPES = {
+    'farm_os_features_point': 'point',
+    'farm_os_features_polygon': 'polygon',
+    'farm_os_features_line_string': 'linestring'
 }
 
-def relevant(factory, feature):
-    geometry = feature.get('geometry', {})
-    geometry_type = geometry.get('type', None)
+def to_feature_member(type_name, feature):
+    geofield = feature.get('geofield', [])
 
-    return geometry_type == factory.relevant_type_name
+    if len(geofield) != 1:
+        return None
+
+    expected_geo_type = FEATURE_MEMBER_GEO_TYPES.get(type_name, None)
+
+    if not expected_geo_type:
+        return None
+
+    if geofield[0]['geo_type'] != expected_geo_type:
+        return None
+
+    area_name = feature.get('name')
+    area_type = feature.get('area_type')
+    area_id = feature.get('tid')
+
+    geom = ogr.CreateGeometryFromWkt(geofield[0].get('geom'))
+
+    srs = osr.SpatialReference()
+    srs.SetFromUserInput(WFS_PROJECTION)
+
+    geom.AssignSpatialReference( srs )
+
+    return gml.featureMember(
+        ms(type_name,
+            ms.geometry(
+                etree.XML(geom.ExportToGML(options = ['FORMAT=GML3Deegree', 'SWAP_COORDINATES=NO', 'NAMESPACE_DECL=YES']))
+            ),
+            ms.area_name(area_name),
+            ms.area_type(area_type),
+            nsAttr.gml.id("{type_name}.{area_id}".format(type_name=type_name, area_id=area_id))
+        )
+    )
 
 def to_type_filtered_feature_members(type_name, features):
-    factory = FEATURE_MEMBER_FACTORIES.get(type_name, None)
+    feature_members = map(partial(to_feature_member, type_name), features)
 
-    if not factory:
-        return ()
-
-    relevant_features = filter(partial(relevant, factory), features)
-
-    feature_members = map(partial(factory.to_feature_member, type_name), relevant_features)
-
-    return filter(None, feature_members)
+    return filter(lambda feature: feature is not None, feature_members)
 
 class FarmOsAreaFeatureProxy(Resource):
     isLeaf = True
@@ -201,19 +114,6 @@ class FarmOsAreaFeatureProxy(Resource):
     def __init__(self, farm_os_url):
         Resource.__init__(self)
         self._farm_os_url = farm_os_url
-
-        print("before farmOS calls")
-
-        farm = farmOS.farmOS(self._farm_os_url, "FarmOS.restws.zero", "zsARb1hZjFwK0jMIh3Td")
-        farm.authenticate()
-
-        #areas = farm.session.http_request("/taxonomy_term.json?bundle=farm_areas&field_farm_area_type=Field")
-
-        #print(areas.json())
-
-        print(farm.area.get())
-
-        print("after farmOS calls")
 
     def render_GET(self, request):
         args = {k.lower(): v for k, v in request.args.items()}
@@ -247,9 +147,9 @@ class FarmOsAreaFeatureProxy(Resource):
         farm = farmOS.farmOS(self._farm_os_url, request.getUser(), request.getPassword())
         farm.authenticate()
 
-        areas = farm.session.http_request("farm/areas/geojson").json()
+        areas = farm.area.get()
 
-        type_filtered_feature_members = to_type_filtered_feature_members(type_name, areas.get('features', []))
+        type_filtered_feature_members = to_type_filtered_feature_members(type_name, areas.get('list', []))
 
         return wfs.FeatureCollection(
             nsAttr.xsi.schemaLocation(("http://mapserver.gis.umn.edu/mapserver "
@@ -286,7 +186,8 @@ class FarmOsAreaFeatureProxy(Resource):
                     E.extension(
                         E.sequence(
                             E.element(name="geometry", type="gml:" + geometry_type, minOccurs="0", maxOccurs="1"),
-                            E.element(name="area_name", type="string")
+                            E.element(name="area_name", type="string"),
+                            E.element(name="area_type", type="string")
                         ),
                         base="gml:AbstractFeatureType"
                     )

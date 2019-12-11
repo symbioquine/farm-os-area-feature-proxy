@@ -16,7 +16,6 @@ docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os
 
 ## Future Work
 
-* Update to use actual python API rather than the geojson endpoints
 * Implement editing
 * Implement caching of FarmOS login sessions
 * Improve error handling
