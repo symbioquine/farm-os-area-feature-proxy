@@ -16,11 +16,13 @@ docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os
 
 ## Future Work
 
-* Implement editing
-* Implement caching of FarmOS login sessions
+* Fix QGIS errors on TransactionResponse when saving edits
+* Implement caching of FarmOS login sessions and vocabularyId retrieval
 * Improve error handling
 * Enable https
 * Support GeometryCollection features
+* Surface description field on features
+* See whether it is possible to model area_type field on features as an enum that QGIS would honor
 
 ## FAQ
 

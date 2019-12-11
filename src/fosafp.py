@@ -31,19 +31,18 @@ import farmOS, re, sys, argparse
 
 from osgeo import ogr, osr
 
-class DictAccessor(object):
-    def __init__(self, d):
-        self._d = d
+class CallableAccessor(object):
+    def __init__(self, c):
+        self._c = c
 
     def __getattr__(self, name):
-        return self._d.get(name)
+        return self._c(name)
 
-class PartialAccessor(object):
-    def __init__(self, fn):
-        self._fn = fn
+def DictAccessor(d):
+    return CallableAccessor(lambda name: d.get(name))
 
-    def __getattr__(self, name):
-        return partial(self._fn, name)
+def PartialAccessor(fn):
+    return CallableAccessor(lambda name: partial(fn, name))
 
 def attr(name, value):
     return {name: value}
@@ -51,15 +50,20 @@ def attr(name, value):
 def ns_attr_partial(namespace):
     return PartialAccessor(lambda attr_name, attr_value: attr("{{{namespace}}}{attr_name}".format(namespace=namespace, attr_name=attr_name), attr_value))
 
+def ns_tag_partial(namespace):
+    return CallableAccessor(lambda tag_name: "{{{namespace}}}{tag_name}".format(namespace=namespace, tag_name=tag_name))
+
 ns = DictAccessor(NAMESPACES)
 nsE = DictAccessor({k: ElementMaker(namespace=v, nsmap=NAMESPACES) for k, v in NAMESPACES.items()})
 nsAttr = DictAccessor({k: ns_attr_partial(v) for k, v in NAMESPACES.items()})
+nsTag = DictAccessor({k: ns_tag_partial(v) for k, v in NAMESPACES.items()})
 
 bare = ElementMaker(nsmap=NAMESPACES)
 wfs = nsE.wfs
 ows = nsE.ows
 gml = nsE.gml
 ms = nsE.ms
+ogc = nsE.ogc
 
 FEATURE_MEMBER_GEO_TYPES = {
     'farm_os_features_point': 'point',
@@ -82,7 +86,7 @@ def to_feature_member(type_name, feature):
         return None
 
     area_name = feature.get('name')
-    area_type = feature.get('area_type')
+    area_type = feature.get('area_type') or ''
     area_id = feature.get('tid')
 
     geom = ogr.CreateGeometryFromWkt(geofield[0].get('geom'))
@@ -129,17 +133,145 @@ class FarmOsAreaFeatureProxy(Resource):
             doc = self._get_feature(request, args)
 
         if not doc is None:
-            request.setHeader('Content-Type', WFS_MIMETYPE)
-            request.setResponseCode(code=200)
-            etree.cleanup_namespaces(doc)
-            return etree.tostring(doc, pretty_print=True)
+            return self._etree_response(request, doc)
 
     def render_POST(self, request):
-        args = {k.lower(): v for k, v in request.args.items()}
+        transaction = objectify.parse(request.content).getroot()
 
-        print(args)
+        if transaction.tag != nsTag.wfs.Transaction:
+            raise Exception("Unsupported post request body root: " + transaction.tag)
 
-        print(request.content.read())
+        farm = farmOS.farmOS(self._farm_os_url, request.getUser(), request.getPassword())
+        farm.authenticate()
+
+        inserted_feature_results = []
+        total_updated = 0
+        total_deleted = 0
+
+        farm_areas_vid = farm.info()['resources']['taxonomy_term']['farm_areas']['vid']
+
+        for action in transaction.iterchildren():
+            if action.tag == nsTag.wfs.Insert:
+                for feature in action.iterchildren():
+                    area_name = feature['area_name'].text
+                    area_type = getattr(getattr(feature, 'area_type', None), 'text', 'other')
+
+                    geos = list(feature.geometry.iterchildren())
+
+                    if len(geos) != 1:
+                        continue
+
+                    geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
+
+                    record = {
+                        "vocabulary": farm_areas_vid,
+                        "name": area_name,
+                        "description": "",
+                        "area_type": area_type,
+                        "geofield": [
+                            {
+                                "geom": geometry.ExportToWkt()
+                            }
+                        ]
+                    }
+
+                    response = farm.area.send(record)
+
+                    feature_type = etree.QName(feature.tag).localname
+
+                    if response:
+                        inserted_feature_results.append(
+                            wfs.Feature(
+                                ogc.FeatureId(fid=feature_type + "." + response.get('id'))
+                            )
+                        )
+                    else:
+                        # TODO: Add error in results
+                        pass
+
+            elif action.tag == nsTag.wfs.Update:
+
+                properties = {}
+
+                for update_property in action[nsTag.wfs.Property]:
+                    property_name = update_property.Name.text
+
+                    if property_name == "geometry":
+                        geos = list(update_property.Value.iterchildren())
+
+                        if len(geos) != 1:
+                            continue
+
+                        geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
+
+                        properties['geofield'] = [
+                            {
+                                "geom": geometry.ExportToWkt()
+                            }
+                        ]
+
+                    else:
+                        properties[property_name] = update_property.Value.text
+
+                for filters in action[nsTag.ogc.Filter]:
+                    for update_filter in filters.iterchildren():
+                        if update_filter.tag != nsTag.ogc.FeatureId:
+                            raise Exception("Only updating by feature id is supported")
+
+                        feature_id = update_filter.get('fid')
+
+                        numeric_feature_id = feature_id.rsplit('.', 1)[1]
+
+                        record = {
+                            "vocabulary": farm_areas_vid,
+                            "id": numeric_feature_id
+                        }
+
+                        record.update(properties)
+
+                        response = farm.area.send(record)
+
+                        if response:
+                            total_updated += 1
+                        else:
+                            # TODO: Add error in results
+                            pass
+
+            elif action.tag == nsTag.wfs.Delete:
+                filters = action[nsTag.ogc.Filter]
+
+                for deletion_filter in filters.iterchildren():
+                    if deletion_filter.tag != nsTag.ogc.FeatureId:
+                        raise Exception("Only deletion by feature id is supported")
+
+                    feature_id = deletion_filter.get('fid')
+
+                    numeric_feature_id = feature_id.rsplit('.', 1)[1]
+
+                    response = farm.area.delete(id=numeric_feature_id)
+
+                    if response.status_code == 200:
+                        total_deleted += 1
+                    else:
+                        # TODO: Add error in results
+                        pass
+
+        return self._etree_response(request, wfs.TransactionResponse(
+            nsAttr.xsi.schemaLocation("{ns.wfs} http://schemas.opengis.net/wfs/{WFS_PROTOCOL_VERSION}/wfs.xsd".format(ns=ns, WFS_PROTOCOL_VERSION=WFS_PROTOCOL_VERSION)),
+            wfs.TransactionSummary(
+                wfs.totalInserted(str(len(inserted_feature_results))),
+                wfs.totalUpdated(str(total_updated)),
+                wfs.totalDeleted(str(total_deleted))
+            ),
+            wfs.InsertResults(*inserted_feature_results),
+            version=WFS_PROTOCOL_VERSION
+        ))
+
+    def _etree_response(self, request, response_doc):
+        request.setHeader('Content-Type', WFS_MIMETYPE)
+        request.setResponseCode(code=200)
+        etree.cleanup_namespaces(response_doc)
+        return etree.tostring(response_doc, pretty_print=True)
 
     def _get_feature(self, request, args):
         type_name = args.get(b'typename')[0].decode('utf-8')
@@ -249,9 +381,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--farm-os-url", help="The url for connecting to FarmOS", type=str, default='http://localhost:80')
     args = parser.parse_args()
-
-    print(sys.argv)
-    print(args)
 
     log.startLogging(sys.stdout)
 
