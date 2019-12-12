@@ -263,6 +263,11 @@ class FarmOsAreaFeatureProxy(Resource):
                 wfs.totalUpdated(str(total_updated)),
                 wfs.totalDeleted(str(total_deleted))
             ),
+            wfs.TransactionResult(
+                wfs.Status(
+                    wfs.SUCCESS()
+                )
+            ),
             wfs.InsertResults(*inserted_feature_results),
             version=WFS_PROTOCOL_VERSION
         ))
@@ -352,7 +357,7 @@ class FarmOsAreaFeatureProxy(Resource):
                 )
             ),
             E.FeatureTypeList(
-                E.Operations(E.Query, E.Insert, E.Update, E.Delete, E.Lock),
+                E.Operations(E.Query, E.Insert, E.Update, E.Delete),
                 *[ E.FeatureType(
                         E.Name("farm_os_features_{}".format(type_name)),
                         E.Title("FarmOS {} features".format(type_name.replace('_', ' '))),
