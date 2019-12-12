@@ -269,6 +269,7 @@ class FarmOsAreaFeatureProxy(Resource):
                 )
             ),
             wfs.InsertResults(*inserted_feature_results),
+            * [wfs.InsertResult(insert_result) for insert_result in inserted_feature_results],
             version=WFS_PROTOCOL_VERSION
         ))
 

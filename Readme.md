@@ -16,7 +16,6 @@ docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os
 
 ## Future Work
 
-* Fix QGIS errors on TransactionResponse when saving edits
 * Implement caching of FarmOS login sessions and vocabularyId retrieval
 * Improve error handling
 * Enable https
