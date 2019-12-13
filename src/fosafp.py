@@ -87,6 +87,7 @@ def to_feature_member(type_name, feature):
 
     area_name = feature.get('name')
     area_type = feature.get('area_type') or ''
+    area_description = feature.get('description') or ''
     area_id = feature.get('tid')
 
     geom = ogr.CreateGeometryFromWkt(geofield[0].get('geom'))
@@ -103,6 +104,7 @@ def to_feature_member(type_name, feature):
             ),
             ms.area_name(area_name),
             ms.area_type(area_type),
+            ms.description(area_description),
             nsAttr.gml.id("{type_name}.{area_id}".format(type_name=type_name, area_id=area_id))
         )
     )
@@ -154,6 +156,7 @@ class FarmOsAreaFeatureProxy(Resource):
             if action.tag == nsTag.wfs.Insert:
                 for feature in action.iterchildren():
                     area_name = feature['area_name'].text
+                    area_description = getattr(getattr(feature, 'description', None), 'text', '')
                     area_type = getattr(getattr(feature, 'area_type', None), 'text', 'other')
 
                     geos = list(feature.geometry.iterchildren())
@@ -166,7 +169,7 @@ class FarmOsAreaFeatureProxy(Resource):
                     record = {
                         "vocabulary": farm_areas_vid,
                         "name": area_name,
-                        "description": "",
+                        "description": area_description,
                         "area_type": area_type,
                         "geofield": [
                             {
@@ -325,7 +328,8 @@ class FarmOsAreaFeatureProxy(Resource):
                         E.sequence(
                             E.element(name="geometry", type="gml:" + geometry_type, minOccurs="0", maxOccurs="1"),
                             E.element(name="area_name", type="string"),
-                            E.element(name="area_type", type="string")
+                            E.element(name="area_type", type="string"),
+                            E.element(name="description", type="string")
                         ),
                         base="gml:AbstractFeatureType"
                     )

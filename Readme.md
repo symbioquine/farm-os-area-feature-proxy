@@ -20,7 +20,6 @@ docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os
 * Improve error handling
 * Enable https
 * Support GeometryCollection features
-* Surface description field on features
 * See whether it is possible to model area_type field on features as an enum that QGIS would honor
 * Remove blocking use of FarmOS python API
 
