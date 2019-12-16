@@ -1,12 +1,14 @@
 #!/bin/env python3
 
-from functools import partial
+import sys, argparse, logging
+from functools import partial, lru_cache, wraps
 
 from twisted.application import service
 from twisted.python import log
 from twisted.web import server
 from twisted.web.resource import Resource
-from twisted.internet import reactor
+from twisted.internet import reactor, defer
+from twisted.web.server import NOT_DONE_YET
 
 from lxml import etree, objectify
 from lxml.builder import E, ElementMaker  # lxml only !
@@ -27,9 +29,10 @@ NAMESPACES = {
     'xsi': "http://www.w3.org/2001/XMLSchema-instance",
 }
 
-import farmOS, re, sys, argparse
-
 from osgeo import ogr, osr
+
+from tx_farm_os_client import TxFarmOsClient
+
 
 class CallableAccessor(object):
     def __init__(self, c):
@@ -114,43 +117,66 @@ def to_type_filtered_feature_members(type_name, features):
 
     return filter(lambda feature: feature is not None, feature_members)
 
+def deferred_rendering_fn(f):
+    @wraps(f)
+    def wrapper(self, request):
+        @defer.inlineCallbacks
+        def _inner(request):
+            try:
+                result = yield defer.maybeDeferred(f, self, request)
+                request.write(result)
+            except:
+                logging.error(logging.traceback.format_exc())
+                request.setResponseCode(500)
+            request.finish()
+        _inner(request)
+        return NOT_DONE_YET
+    return wrapper
+
 class FarmOsAreaFeatureProxy(Resource):
     isLeaf = True
 
     def __init__(self, farm_os_url):
         Resource.__init__(self)
-        self._farm_os_url = farm_os_url
+        farm_os_client_creation_lock = defer.DeferredLock()
 
+        self._create_farm_os_client = partial(farm_os_client_creation_lock.run,
+                                              lru_cache(maxsize=32)(partial(TxFarmOsClient.create, farm_os_url, user_agent="FarmOsAreaFeatureProxy")))
+
+    @deferred_rendering_fn
+    @defer.inlineCallbacks
     def render_GET(self, request):
+        # Make sure this fn is always a generator
+        yield defer.succeed(True)
+
         args = {k.lower(): v for k, v in request.args.items()}
 
         request_type = args.get(b'request')[0]
 
         doc = None
         if request_type == b'GetCapabilities':
-            doc = self._get_capabilities()
+            doc = yield self._get_capabilities()
         elif request_type == b'DescribeFeatureType':
-            doc = self._describe_feature_type(args)
+            doc = yield self._describe_feature_type(args)
         elif request_type == b'GetFeature':
-            doc = self._get_feature(request, args)
+            doc = yield self._get_feature(request, args)
 
         if not doc is None:
             return self._etree_response(request, doc)
 
+    @deferred_rendering_fn
+    @defer.inlineCallbacks
     def render_POST(self, request):
         transaction = objectify.parse(request.content).getroot()
 
         if transaction.tag != nsTag.wfs.Transaction:
             raise Exception("Unsupported post request body root: " + transaction.tag)
 
-        farm = farmOS.farmOS(self._farm_os_url, request.getUser(), request.getPassword())
-        farm.authenticate()
+        farm_os_client = yield self._create_farm_os_client(request.getUser(), request.getPassword())
 
         inserted_feature_results = []
         total_updated = 0
         total_deleted = 0
-
-        farm_areas_vid = farm.info()['resources']['taxonomy_term']['farm_areas']['vid']
 
         for action in transaction.iterchildren():
             if action.tag == nsTag.wfs.Insert:
@@ -167,7 +193,6 @@ class FarmOsAreaFeatureProxy(Resource):
                     geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
 
                     record = {
-                        "vocabulary": farm_areas_vid,
                         "name": area_name,
                         "description": area_description,
                         "area_type": area_type,
@@ -178,17 +203,18 @@ class FarmOsAreaFeatureProxy(Resource):
                         ]
                     }
 
-                    response = farm.area.send(record)
+                    try:
+                        response = yield farm_os_client.area.create(record)
 
-                    feature_type = etree.QName(feature.tag).localname
+                        feature_type = etree.QName(feature.tag).localname
 
-                    if response:
                         inserted_feature_results.append(
                             wfs.Feature(
                                 ogc.FeatureId(fid=feature_type + "." + response.get('id'))
                             )
                         )
-                    else:
+                    except:
+                        logging.error(logging.traceback.format_exc())
                         # TODO: Add error in results
                         pass
 
@@ -213,6 +239,9 @@ class FarmOsAreaFeatureProxy(Resource):
                             }
                         ]
 
+                    if property_name == "area_name":
+                        properties['name'] = update_property.Value.text
+
                     else:
                         properties[property_name] = update_property.Value.text
 
@@ -225,18 +254,15 @@ class FarmOsAreaFeatureProxy(Resource):
 
                         numeric_feature_id = feature_id.rsplit('.', 1)[1]
 
-                        record = {
-                            "vocabulary": farm_areas_vid,
-                            "id": numeric_feature_id
-                        }
+                        record = {}
 
                         record.update(properties)
 
-                        response = farm.area.send(record)
-
-                        if response:
+                        try:
+                            yield farm_os_client.area.update(numeric_feature_id, record)
                             total_updated += 1
-                        else:
+                        except:
+                            logging.error(logging.traceback.format_exc())
                             # TODO: Add error in results
                             pass
 
@@ -251,11 +277,11 @@ class FarmOsAreaFeatureProxy(Resource):
 
                     numeric_feature_id = feature_id.rsplit('.', 1)[1]
 
-                    response = farm.area.delete(id=numeric_feature_id)
-
-                    if response.status_code == 200:
+                    try:
+                        yield farm_os_client.area.delete(numeric_feature_id)
                         total_deleted += 1
-                    else:
+                    except:
+                        logging.error(logging.traceback.format_exc())
                         # TODO: Add error in results
                         pass
 
@@ -282,15 +308,15 @@ class FarmOsAreaFeatureProxy(Resource):
         etree.cleanup_namespaces(response_doc)
         return etree.tostring(response_doc, pretty_print=True)
 
+    @defer.inlineCallbacks
     def _get_feature(self, request, args):
         type_name = args.get(b'typename')[0].decode('utf-8')
 
-        farm = farmOS.farmOS(self._farm_os_url, request.getUser(), request.getPassword())
-        farm.authenticate()
+        farm_os_client = yield self._create_farm_os_client(request.getUser(), request.getPassword())
 
-        areas = farm.area.get()
+        areas = yield farm_os_client.area.get_all()
 
-        type_filtered_feature_members = to_type_filtered_feature_members(type_name, areas.get('list', []))
+        type_filtered_feature_members = to_type_filtered_feature_members(type_name, areas)
 
         return wfs.FeatureCollection(
             nsAttr.xsi.schemaLocation(("http://mapserver.gis.umn.edu/mapserver "
@@ -303,7 +329,11 @@ class FarmOsAreaFeatureProxy(Resource):
             *type_filtered_feature_members
         )
 
+    @defer.inlineCallbacks
     def _describe_feature_type(self, args):
+        # Make sure this fn is always a generator
+        yield defer.succeed(True)
+
         type_name = args.get(b'typename')[0].decode('utf-8')
 
         geometry_type = {
@@ -342,6 +372,7 @@ class FarmOsAreaFeatureProxy(Resource):
             version="0.1"
         )
 
+    @defer.inlineCallbacks
     def _get_capabilities(self):
         return wfs.WFS_Capabilities(
             ows.ServiceIdentification(
@@ -386,6 +417,7 @@ class FarmOsAreaFeatureProxyService(service.Service):
 
     def stopService(self):
         return self._port.stopListening()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

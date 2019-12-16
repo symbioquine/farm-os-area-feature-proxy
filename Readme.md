@@ -16,12 +16,14 @@ docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os
 
 ## Future Work
 
-* Implement caching of FarmOS login sessions and vocabularyId retrieval
+* Cache features
+* Improve extent handling
+* Do transaction commits in parallel
 * Improve error handling
 * Enable https
 * Support GeometryCollection features
 * See whether it is possible to model area_type field on features as an enum that QGIS would honor
-* Remove blocking use of FarmOS python API
+* break tx_drupal_rest_ws_client and tx_farm_os_client into separate repositories
 
 ## FAQ
 
