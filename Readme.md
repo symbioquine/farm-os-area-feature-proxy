@@ -14,10 +14,25 @@ Or when running against the [FarmOS development docker-compose](https://farmos.o
 docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os-development_default -it $(docker build -q src/) --farm-os-url=http://www
 ```
 
+## Https
+
+Create dev certificates using [mkcert](https://github.com/FiloSottile/mkcert);
+
+```bash
+mkdir devcerts && pushd devcerts
+mkcert example.com "*.example.com" example.test localhost 127.0.0.1 ::1
+popd
+```
+
+Run;
+
+```bash
+docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 -v $(pwd)/devcerts:/mnt/certs --network=farm-os-development_default -it $(docker build -q src/) --farm-os-url=http://www --proxy-spec="ssl:5707:privateKey=/mnt/certs/example.com+5-key.pem:certKey=/mnt/certs/example.com+5.pem"
+```
+
 ## Future Work
 
 * Improve extent handling
-* Enable https
 * Support GeometryCollection features
 * See whether it is possible to model area_type field on features as an enum that QGIS would honor
 * break tx_drupal_rest_ws_client and tx_farm_os_client into separate repositories

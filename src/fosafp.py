@@ -3,11 +3,11 @@
 import sys, argparse, logging
 from functools import partial, lru_cache, wraps
 
-from twisted.application import service
+from twisted.application import service, strports
 from twisted.python import log
 from twisted.web import server
 from twisted.web.resource import Resource
-from twisted.internet import reactor, defer, task
+from twisted.internet import reactor, defer, task, endpoints
 from twisted.web.server import NOT_DONE_YET
 
 from lxml import etree, objectify
@@ -454,6 +454,9 @@ class FarmOsAreaFeatureProxy(Resource):
 
     @defer.inlineCallbacks
     def _get_capabilities(self):
+        # Make sure this fn is always a generator
+        yield defer.succeed(True)
+
         return wfs.WFS_Capabilities(
             ows.ServiceIdentification(
                 ows.ServiceTypeVersion(WFS_PROTOCOL_VERSION)
@@ -486,32 +489,28 @@ class FarmOsAreaFeatureProxy(Resource):
             version=WFS_PROTOCOL_VERSION
         )
 
-
-class FarmOsAreaFeatureProxyService(service.Service):
-    def __init__(self, port_num, farm_os_url):
-        self._port_num = port_num
-        self._farm_os_url = farm_os_url
-
-    def startService(self):
-        self._port = reactor.listenTCP(self._port_num, server.Site(FarmOsAreaFeatureProxy(self._farm_os_url)))
-
-    def stopService(self):
-        return self._port.stopListening()
-
-
-if __name__ == "__main__":
+def main(reactor):
     parser = argparse.ArgumentParser()
     parser.add_argument("--farm-os-url", help="The url for connecting to FarmOS", type=str, default='http://localhost:80')
+    parser.add_argument("--proxy-spec", help="The specification for hosting the proxy port", type=str, default='tcp:5707')
     args = parser.parse_args()
 
     log.startLogging(sys.stdout)
 
-    application = service.Application("FarmOsAreaFeatureProxy")
-    service = FarmOsAreaFeatureProxyService(5707, args.farm_os_url)
-    service.setServiceParent(application)
+    application = service.Application('FarmOsAreaFeatureProxy', uid=1, gid=1)
 
-    service.startService()
+    service_collection = service.IServiceCollection(application)
+
+    site = server.Site(FarmOsAreaFeatureProxy(args.farm_os_url))
+
+    svc = strports.service(args.proxy_spec, site)
+    svc.setServiceParent(service_collection)
+
     try:
+        svc.startService()
         reactor.run()
     finally:
-        service.stopService()
+        svc.stopService()
+
+if __name__ == "__main__":
+    main(reactor)
