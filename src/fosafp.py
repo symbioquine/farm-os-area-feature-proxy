@@ -7,7 +7,7 @@ from twisted.application import service
 from twisted.python import log
 from twisted.web import server
 from twisted.web.resource import Resource
-from twisted.internet import reactor, defer
+from twisted.internet import reactor, defer, task
 from twisted.web.server import NOT_DONE_YET
 
 from lxml import etree, objectify
@@ -69,6 +69,10 @@ ows = nsE.ows
 gml = nsE.gml
 ms = nsE.ms
 ogc = nsE.ogc
+
+AREAS_CACHE_SECONDS = 60
+CLIENT_INSTANCE_CACHE_SIZE = 32
+TRANSACTION_COMMIT_PARALLELISM = 16
 
 FEATURE_MEMBER_GEO_TYPES = {
     'farm_os_features_point': 'point',
@@ -148,11 +152,11 @@ class FarmOsAreaFeatureProxy(Resource):
         farm_os_client_creation_lock = defer.DeferredLock()
 
         self._create_farm_os_client = partial(farm_os_client_creation_lock.run,
-                                              lru_cache(maxsize=32)(partial(TxFarmOsClient.create, farm_os_url, user_agent="FarmOsAreaFeatureProxy")))
+                                              lru_cache(maxsize=CLIENT_INSTANCE_CACHE_SIZE)(partial(TxFarmOsClient.create, farm_os_url, user_agent="FarmOsAreaFeatureProxy")))
 
         all_areas_cache_lock = defer.DeferredLock()
-        self._get_all_areas_cache_cell = partial(farm_os_client_creation_lock.run,
-                                                 cached(cache=TTLCache(maxsize=32, ttl=60))(_AllAreasCacheCell))
+        self._get_all_areas_cache_cell = partial(all_areas_cache_lock.run,
+                                                 cached(cache=TTLCache(maxsize=CLIENT_INSTANCE_CACHE_SIZE, ttl=AREAS_CACHE_SECONDS))(_AllAreasCacheCell))
 
 
     @deferred_rendering_fn
@@ -187,115 +191,151 @@ class FarmOsAreaFeatureProxy(Resource):
         farm_os_client = yield self._create_farm_os_client(request.getUser(), request.getPassword())
 
         inserted_feature_results = []
-        total_updated = 0
-        total_deleted = 0
+        updated_feature_ids = []
+        deleted_feature_ids = []
+        transaction_exceptions = []
 
-        for action in transaction.iterchildren():
-            if action.tag == nsTag.wfs.Insert:
-                for feature in action.iterchildren():
-                    area_name = feature['area_name'].text
-                    area_description = getattr(getattr(feature, 'description', None), 'text', '')
-                    area_type = getattr(getattr(feature, 'area_type', None), 'text', 'other')
+        def work_iter():
+            for action in transaction.iterchildren():
+                if action.tag == nsTag.wfs.Insert:
+                    for feature in action.iterchildren():
 
-                    geos = list(feature.geometry.iterchildren())
+                        @defer.inlineCallbacks
+                        def insert_feature_work():
+                            # Make sure this fn is always a generator
+                            yield defer.succeed(True)
 
-                    if len(geos) != 1:
-                        continue
+                            area_name = feature['area_name'].text
+                            area_description = getattr(getattr(feature, 'description', None), 'text', '')
+                            area_type = getattr(getattr(feature, 'area_type', None), 'text', 'other')
 
-                    geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
+                            geos = list(feature.geometry.iterchildren())
 
-                    record = {
-                        "name": area_name,
-                        "description": area_description,
-                        "area_type": area_type,
-                        "geofield": [
-                            {
-                                "geom": geometry.ExportToWkt()
+                            if len(geos) != 1:
+                                transaction_exceptions.append("Received invalid feature to insert with {} geometries".format(len(geos)))
+                                return
+
+                            geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
+
+                            record = {
+                                "name": area_name,
+                                "description": area_description,
+                                "area_type": area_type,
+                                "geofield": [
+                                    {
+                                        "geom": geometry.ExportToWkt()
+                                    }
+                                ]
                             }
-                        ]
-                    }
 
-                    try:
-                        response = yield farm_os_client.area.create(record)
+                            try:
+                                response = yield farm_os_client.area.create(record)
 
-                        feature_type = etree.QName(feature.tag).localname
+                                feature_type = etree.QName(feature.tag).localname
 
-                        inserted_feature_results.append(
-                            wfs.Feature(
-                                ogc.FeatureId(fid=feature_type + "." + response.get('id'))
-                            )
-                        )
-                    except:
-                        logging.error(logging.traceback.format_exc())
-                        # TODO: Add error in results
-                        pass
+                                inserted_feature_results.append(
+                                    wfs.Feature(
+                                        ogc.FeatureId(fid=feature_type + "." + response.get('id'))
+                                    )
+                                )
+                            except:
+                                formatted_exception = logging.traceback.format_exc()
+                                logging.error(formatted_exception)
+                                transaction_exceptions.append(formatted_exception)
 
-            elif action.tag == nsTag.wfs.Update:
+                        yield insert_feature_work()
 
-                properties = {}
+                elif action.tag == nsTag.wfs.Update:
 
-                for update_property in action[nsTag.wfs.Property]:
-                    property_name = update_property.Name.text
+                    properties = {}
 
-                    if property_name == "geometry":
-                        geos = list(update_property.Value.iterchildren())
+                    for update_property in action[nsTag.wfs.Property]:
+                        property_name = update_property.Name.text
 
-                        if len(geos) != 1:
-                            continue
+                        if property_name == "geometry":
+                            geos = list(update_property.Value.iterchildren())
 
-                        geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
+                            if len(geos) != 1:
+                                transaction_exceptions.append("Received invalid geometry update with {} geometries".format(len(geos)))
+                                continue
 
-                        properties['geofield'] = [
-                            {
-                                "geom": geometry.ExportToWkt()
-                            }
-                        ]
+                            geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
 
-                    if property_name == "area_name":
-                        properties['name'] = update_property.Value.text
+                            properties['geofield'] = [
+                                {
+                                    "geom": geometry.ExportToWkt()
+                                }
+                            ]
 
-                    else:
-                        properties[property_name] = update_property.Value.text
+                        if property_name == "area_name":
+                            properties['name'] = update_property.Value.text
 
-                for filters in action[nsTag.ogc.Filter]:
-                    for update_filter in filters.iterchildren():
-                        if update_filter.tag != nsTag.ogc.FeatureId:
-                            raise Exception("Only updating by feature id is supported")
+                        else:
+                            properties[property_name] = update_property.Value.text
 
-                        feature_id = update_filter.get('fid')
+                    for filters in action[nsTag.ogc.Filter]:
+                        for update_filter in filters.iterchildren():
 
-                        numeric_feature_id = feature_id.rsplit('.', 1)[1]
+                            @defer.inlineCallbacks
+                            def update_feature_work():
+                                # Make sure this fn is always a generator
+                                yield defer.succeed(True)
 
-                        record = {}
+                                if update_filter.tag != nsTag.ogc.FeatureId:
+                                    transaction_exceptions.append("Only updating by feature id is supported")
+                                    return
 
-                        record.update(properties)
+                                feature_id = update_filter.get('fid')
 
-                        try:
-                            yield farm_os_client.area.update(numeric_feature_id, record)
-                            total_updated += 1
-                        except:
-                            logging.error(logging.traceback.format_exc())
-                            # TODO: Add error in results
-                            pass
+                                numeric_feature_id = feature_id.rsplit('.', 1)[1]
 
-            elif action.tag == nsTag.wfs.Delete:
-                filters = action[nsTag.ogc.Filter]
+                                record = {}
 
-                for deletion_filter in filters.iterchildren():
-                    if deletion_filter.tag != nsTag.ogc.FeatureId:
-                        raise Exception("Only deletion by feature id is supported")
+                                record.update(properties)
 
-                    feature_id = deletion_filter.get('fid')
+                                try:
+                                    yield farm_os_client.area.update(numeric_feature_id, record)
+                                    updated_feature_ids.append(feature_id)
+                                except:
+                                    formatted_exception = logging.traceback.format_exc()
+                                    logging.error(formatted_exception)
+                                    transaction_exceptions.append(formatted_exception)
 
-                    numeric_feature_id = feature_id.rsplit('.', 1)[1]
+                            yield update_feature_work()
 
-                    try:
-                        yield farm_os_client.area.delete(numeric_feature_id)
-                        total_deleted += 1
-                    except:
-                        logging.error(logging.traceback.format_exc())
-                        # TODO: Add error in results
-                        pass
+                elif action.tag == nsTag.wfs.Delete:
+                    filters = action[nsTag.ogc.Filter]
+
+                    for deletion_filter in filters.iterchildren():
+
+                        @defer.inlineCallbacks
+                        def delete_feature_work():
+                            # Make sure this fn is always a generator
+                            yield defer.succeed(True)
+
+                            if deletion_filter.tag != nsTag.ogc.FeatureId:
+                                transaction_exceptions.append("Only deletion by feature id is supported")
+                                return
+
+                            feature_id = deletion_filter.get('fid')
+
+                            numeric_feature_id = feature_id.rsplit('.', 1)[1]
+
+                            try:
+                                yield farm_os_client.area.delete(numeric_feature_id)
+                                deleted_feature_ids.append(feature_id)
+                            except:
+                                formatted_exception = logging.traceback.format_exc()
+                                logging.error(formatted_exception)
+                                transaction_exceptions.append(formatted_exception)
+
+                        yield delete_feature_work()
+
+        cooperator = task.Cooperator()
+
+        work = work_iter()
+
+        yield defer.gatherResults([cooperator.coiterate(work) for _ignored in range(TRANSACTION_COMMIT_PARALLELISM)])
 
         yield self._expire_all_areas_cache(farm_os_client)
 
@@ -303,13 +343,11 @@ class FarmOsAreaFeatureProxy(Resource):
             nsAttr.xsi.schemaLocation("{ns.wfs} http://schemas.opengis.net/wfs/{WFS_PROTOCOL_VERSION}/wfs.xsd".format(ns=ns, WFS_PROTOCOL_VERSION=WFS_PROTOCOL_VERSION)),
             wfs.TransactionSummary(
                 wfs.totalInserted(str(len(inserted_feature_results))),
-                wfs.totalUpdated(str(total_updated)),
-                wfs.totalDeleted(str(total_deleted))
+                wfs.totalUpdated(str(len(updated_feature_ids))),
+                wfs.totalDeleted(str(len(deleted_feature_ids)))
             ),
             wfs.TransactionResult(
-                wfs.Status(
-                    wfs.SUCCESS()
-                )
+                * ( [wfs.Message("\n".join(transaction_exceptions))] if transaction_exceptions else [wfs.Status(wfs.SUCCESS())] )
             ),
             wfs.InsertResults(*inserted_feature_results),
             * [wfs.InsertResult(insert_result) for insert_result in inserted_feature_results],

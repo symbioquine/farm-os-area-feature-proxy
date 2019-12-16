@@ -17,8 +17,6 @@ docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os
 ## Future Work
 
 * Improve extent handling
-* Do transaction commits in parallel
-* Improve error handling
 * Enable https
 * Support GeometryCollection features
 * See whether it is possible to model area_type field on features as an enum that QGIS would honor
