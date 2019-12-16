@@ -13,6 +13,8 @@ from twisted.web.server import NOT_DONE_YET
 from lxml import etree, objectify
 from lxml.builder import E, ElementMaker  # lxml only !
 
+from cachetools import cached, TTLCache
+
 WFS_PROTOCOL_VERSION = "1.1.0"
 WFS_PROJECTION = "EPSG:4326"
 WFS_MIMETYPE = "text/xml"
@@ -133,6 +135,11 @@ def deferred_rendering_fn(f):
         return NOT_DONE_YET
     return wrapper
 
+class _AllAreasCacheCell(object):
+    def __init__(self, _ignored):
+        self.lock = defer.DeferredLock()
+        self.value = None
+
 class FarmOsAreaFeatureProxy(Resource):
     isLeaf = True
 
@@ -142,6 +149,11 @@ class FarmOsAreaFeatureProxy(Resource):
 
         self._create_farm_os_client = partial(farm_os_client_creation_lock.run,
                                               lru_cache(maxsize=32)(partial(TxFarmOsClient.create, farm_os_url, user_agent="FarmOsAreaFeatureProxy")))
+
+        all_areas_cache_lock = defer.DeferredLock()
+        self._get_all_areas_cache_cell = partial(farm_os_client_creation_lock.run,
+                                                 cached(cache=TTLCache(maxsize=32, ttl=60))(_AllAreasCacheCell))
+
 
     @deferred_rendering_fn
     @defer.inlineCallbacks
@@ -285,6 +297,8 @@ class FarmOsAreaFeatureProxy(Resource):
                         # TODO: Add error in results
                         pass
 
+        yield self._expire_all_areas_cache(farm_os_client)
+
         return self._etree_response(request, wfs.TransactionResponse(
             nsAttr.xsi.schemaLocation("{ns.wfs} http://schemas.opengis.net/wfs/{WFS_PROTOCOL_VERSION}/wfs.xsd".format(ns=ns, WFS_PROTOCOL_VERSION=WFS_PROTOCOL_VERSION)),
             wfs.TransactionSummary(
@@ -314,7 +328,7 @@ class FarmOsAreaFeatureProxy(Resource):
 
         farm_os_client = yield self._create_farm_os_client(request.getUser(), request.getPassword())
 
-        areas = yield farm_os_client.area.get_all()
+        areas = yield self._cached_get_all_areas(farm_os_client)
 
         type_filtered_feature_members = to_type_filtered_feature_members(type_name, areas)
 
@@ -328,6 +342,34 @@ class FarmOsAreaFeatureProxy(Resource):
                                           type_name=type_name)),
             *type_filtered_feature_members
         )
+
+    @defer.inlineCallbacks
+    def _cached_get_all_areas(self, farm_os_client):
+        cache_cell = yield self._get_all_areas_cache_cell(id(farm_os_client))
+
+        all_areas = cache_cell.value
+
+        if not all_areas is None:
+            return all_areas
+
+        yield cache_cell.lock.acquire()
+        try:
+            if not cache_cell.value is None:
+                return cache_cell.value
+
+            all_areas = yield farm_os_client.area.get_all()
+
+            cache_cell.value = all_areas
+
+            return all_areas
+        finally:
+            cache_cell.lock.release()
+
+    @defer.inlineCallbacks
+    def _expire_all_areas_cache(self, farm_os_client):
+        cache_cell = yield self._get_all_areas_cache_cell(id(farm_os_client))
+
+        yield cache_cell.lock.run(setattr, cache_cell, 'value', None)
 
     @defer.inlineCallbacks
     def _describe_feature_type(self, args):

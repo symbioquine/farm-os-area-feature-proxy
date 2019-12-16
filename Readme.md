@@ -16,7 +16,6 @@ docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os
 
 ## Future Work
 
-* Cache features
 * Improve extent handling
 * Do transaction commits in parallel
 * Improve error handling

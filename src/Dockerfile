@@ -40,6 +40,7 @@ pip3 install --no-cache-dir -U \
     # cheetah \ => not compatible with python 3
     'twisted==17.9.0' \
     'lxml' \
+    'cachetools' \
     'pyopenssl' \
     'service_identity' && \
 
