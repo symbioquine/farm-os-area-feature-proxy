@@ -187,8 +187,10 @@ class TxDrupalRestWsClient(object):
                     'Content-Type': ["application/x-www-form-urlencoded"]
                 }), body)
 
-            if response.code != 302:
-                raise Exception("Login failed")
+            if response.code != 302 and response.code != 200:
+                result = yield _read_body_no_warn(response)
+
+                raise Exception("Login failed: " + str(response.code) + ": " + str(result))
 
             response = yield self._tx_agent.request(b'GET', self._session_token_url,
                 Headers({
@@ -196,7 +198,9 @@ class TxDrupalRestWsClient(object):
                 }), None)
 
             if response.code != 200:
-                raise Exception("Session token retrieval failed")
+                result = yield _read_body_no_warn(response)
+
+                raise Exception("Session token retrieval failed: " + str(response.code) + ": " + str(result))
 
             self._csrf_token = yield _read_body_no_warn(response)
             self._session_expiry = self._derive_session_expiry_date_time()
