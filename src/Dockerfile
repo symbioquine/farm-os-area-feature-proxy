@@ -42,6 +42,7 @@ pip3 install --no-cache-dir -U \
     'lxml' \
     'cachetools' \
     'pyopenssl' \
+    'semantic_version' \
     'service_identity' && \
 
 # clean up
