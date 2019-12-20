@@ -1,8 +1,32 @@
 # farm-os-area-feature-proxy
 
-farm-os-area-feature-proxy is a stand-alone proxy which makes a standard FarmOS installation accessible as a Web Feature Service (WFS) which can be used in programs such as Quantum GIS.
+farm-os-area-feature-proxy is a stand-alone proxy which makes a standard FarmOS installation accessible as a [Web Feature Service (WFS)](https://www.opengeospatial.org/standards/wfs) which can be used in programs such as [Quantum GIS](https://qgis.org).
+
+In practical terms, farm-os-area-feature-proxy provides bi-directional data flow between areas configured in FarmOS and vector feature layers in QGIS. This allows farm areas to be viewed/edited in the context of additional data with more powerful mapping tools than FarmOS currently provides.
+
+Here are some examples of things which that might help with;
+
+* Easily use multiple "base maps" such as those provided by county GIS departments rather than just Google/OSM
+* Copy property boundaries or other features from existing GIS resources into the map and have them automatically converted to the correct CRS
+* Georeference raster images of a property from a drone and use that as a background layer for mapping complex gardens, buildings, hoop houses, etc
+* Use existing advanced digitalizing tools and plugins to draw precise dimensions, geometric patterns, angles, etc
+* (hypothetically) Import topo data then calculate average angle of incidence, hours of daylight, etc for each field/garden based on the surrounding hills and append this information to the FarmOS area description
+
+**Demo of FarmOS and Quantum GIS connected via the proxy;**
+
+![Peek 2019-12-18 09-11](https://user-images.githubusercontent.com/30754460/71107878-d0bb1300-2176-11ea-9a86-352176e3f6bf.gif)
+
+## Limitations
+
+* Only supports WFS 1.0.0 currently
+* Only supports features with single geometries
+* Only supports the area name, type, and description fields
+* Only returns supports [EPSG:4326](https://epsg.io/4326) spatial reference system
+* Doesn't return extents of feature layers (Mapping tools may not automatically zoom to show all features when first adding the feature layers)
 
 ## Getting Started
+
+Like FarmOS, the recommended way of running farm-os-area-feature-proxy is via Docker.
 
 ```bash
 docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 -it $(docker build -q src/) --farm-os-url=http://172.17.0.2:123
@@ -14,9 +38,23 @@ Or when running against the [FarmOS development docker-compose](https://farmos.o
 docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os-development_default -it $(docker build -q src/) --farm-os-url=http://www
 ```
 
+Now the proxy will be running at http://localhost:5707
+
+### Use in QGIS
+
+Configure a layer data source with the following parameters;
+
+```
+Name: FarmOSExample
+URL: http://localhost:5707
+Basic Authentication
+```
+
+The user name and password should be those of a user on your FarmOS site who is authorized to make restws requests. Useful background can be found at https://farmos.org/development/api/#authentication
+
 ## Https
 
-Create dev certificates using [mkcert](https://github.com/FiloSottile/mkcert);
+Create dev certificates using [mkcert](https://github.com/FiloSottile/mkcert); *(Obviously, production usage would involve obtaining real certificates - left as an exercise to the reader.)*
 
 ```bash
 mkdir devcerts && pushd devcerts
@@ -30,11 +68,16 @@ Run;
 docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 -v $(pwd)/devcerts:/mnt/certs --network=farm-os-development_default -it $(docker build -q src/) --farm-os-url=http://www --proxy-spec="ssl:5707:privateKey=/mnt/certs/example.com+5-key.pem:certKey=/mnt/certs/example.com+5.pem"
 ```
 
+*Note: Don't forget to register the mkcert root CA in the QGIS settings if you want this to work reliably in QGIS.*
+
 ## Future Work
 
+* Publish Docker image and update readme to make "getting started" instructions above use that image
+* Add documentation for how to run via docker-compose with the rest of FarmOS
 * Improve extent handling
 * Support GeometryCollection features
 * See whether it is possible to model area_type field on features as an enum that QGIS would honor
+* See how OAuth2 authentication with FarmOS (ref: [FarmOS#203](https://github.com/farmOS/farmOS/issues/203)) could work (QGIS has a [plugin to support OAuth2](http://docs.opengeospatial.org/per/17-021.pdf), but more investigation is needed to see how transitive authentication could/should work with FarmOS)
 * break tx_drupal_rest_ws_client and tx_farm_os_client into separate repositories
 
 ## FAQ
