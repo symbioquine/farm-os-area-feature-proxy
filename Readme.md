@@ -21,7 +21,7 @@ Here are some examples of things which that might help with;
 * Only supports WFS 1.0.0 currently
 * Only supports features with single geometries
 * Only supports the area name, type, and description fields
-* Only returns supports [EPSG:4326](https://epsg.io/4326) spatial reference system
+* Only supports [EPSG:4326](https://epsg.io/4326) spatial reference system
 * Doesn't return extents of feature layers (Mapping tools may not automatically zoom to show all features when first adding the feature layers)
 
 ## Getting Started
