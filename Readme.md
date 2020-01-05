@@ -26,19 +26,19 @@ Here are some examples of things which that might help with;
 
 ## Getting Started
 
-Like FarmOS, the recommended way of running farm-os-area-feature-proxy is via Docker.
+Add the `area-feature-proxy` service to your [FarmOS docker-compose.yml](https://farmos.org/hosting/docker/) file;
 
-```bash
-docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 -it $(docker build -q src/) --farm-os-url=http://172.17.0.2:123
+```yaml
+  area-feature-proxy:
+    depends_on:
+      - www
+    image: farm-os-area-feature-proxy:0.1.0
+    command: --farm-os-url=http://www:80
+    ports:
+      - '5707:5707'
 ```
 
-Or when running against the [FarmOS development docker-compose](https://farmos.org/development/docker/) environment;
-
-```bash
-docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os-development_default -it $(docker build -q src/) --farm-os-url=http://www
-```
-
-Now the proxy will be running at http://localhost:5707
+The WFS service will now be running at http://localhost:5707 next time you run `docker-compose up`.
 
 ### Use in QGIS
 
@@ -51,24 +51,6 @@ Basic Authentication
 ```
 
 The user name and password should be those of a user on your FarmOS site who is authorized to make restws requests. Useful background can be found at https://farmos.org/development/api/#authentication
-
-## Https
-
-Create dev certificates using [mkcert](https://github.com/FiloSottile/mkcert); *(Obviously, production usage would involve obtaining real certificates - left as an exercise to the reader.)*
-
-```bash
-mkdir devcerts && pushd devcerts
-mkcert example.com "*.example.com" example.test localhost 127.0.0.1 ::1
-popd
-```
-
-Run;
-
-```bash
-docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 -v $(pwd)/devcerts:/mnt/certs --network=farm-os-development_default -it $(docker build -q src/) --farm-os-url=http://www --proxy-spec="ssl:5707:privateKey=/mnt/certs/example.com+5-key.pem:certKey=/mnt/certs/example.com+5.pem"
-```
-
-*Note: Don't forget to register the mkcert root CA in the QGIS settings if you want this to work reliably in QGIS.*
 
 ## Future Work
 
@@ -89,3 +71,54 @@ Yes, but it's convenient to be able to use the FarmOS data directly in fully-fle
 ### Why write a stand-alone proxy? Wouldn't it be better to build the WFS server functionality directly into FarmOS?
 
 Possibly, but it would be more costly to get this proof-of-concept into a state where it could be a reasonable pull-request. Also, there are advantages in not bloating FarmOS with functionality that only some users will need.
+
+
+## Development Testing
+
+You can also run farm-os-area-feature-proxy directly from a checked out copy of this repository;
+
+```bash
+docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 -it $(docker build -q src/) --farm-os-url=http://172.17.0.2:123:80
+```
+
+Or when running against the [FarmOS development docker-compose](https://farmos.org/development/docker/) environment;
+
+```bash
+docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 --network=farm-os-development_default -it $(docker build -q src/) --farm-os-url=http://www:80
+```
+
+Now the proxy will be running at http://localhost:5707
+
+## Https
+
+Since farm-os-area-feature-proxy handles your FarmOS credentials you should consider your threat-model and probably host a secure endpoint.
+
+*Note: Many use-cases would be better served by an NGINX reverse-proxy which would provide much more control over protocols, ciphers, DH parameters, etc.*
+
+Create dev certificates using [mkcert](https://github.com/FiloSottile/mkcert); *(Obviously, production usage would involve obtaining real certificates - left as an exercise to the reader.)*
+
+```bash
+mkdir devcerts && mkcert -key-file devcerts/key.pem -cert-file devcerts/cert.pem farmos.local *.farmos.local localhost 127.0.0.1 ::1
+```
+
+Run;
+
+```yaml
+  area-feature-proxy:
+    depends_on:
+      - www
+    image: farm-os-area-feature-proxy:0.1.0
+    command: --farm-os-url=http://www:80 --proxy-spec="ssl:5707:privateKey=/mnt/certs/key.pem:certKey=/mnt/certs/cert.pem"
+    volumes:
+      - './devcerts:/mnt/certs'
+    ports:
+      - '5707:5707'
+```
+
+or;
+
+```bash
+docker run --name=farm-os-area-feature-proxy --rm -p 5707:5707 -v $(pwd)/devcerts:/mnt/certs --network=farm-os-development_default -it $(docker build -q src/) --farm-os-url=http://www:80 --proxy-spec="ssl:5707:privateKey=/mnt/certs/key.pem:certKey=/mnt/certs/cert.pem"
+```
+
+*Note: Don't forget to register the mkcert root CA in the QGIS settings if you want this to work reliably in QGIS.*
