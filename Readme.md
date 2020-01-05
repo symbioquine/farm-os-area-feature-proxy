@@ -32,7 +32,7 @@ Add the `area-feature-proxy` service to your [FarmOS docker-compose.yml](https:/
   area-feature-proxy:
     depends_on:
       - www
-    image: farm-os-area-feature-proxy:0.1.0
+    image: symbioquine/farm-os-area-feature-proxy:0.1.0
     command: --farm-os-url=http://www:80
     ports:
       - '5707:5707'
@@ -54,8 +54,6 @@ The user name and password should be those of a user on your FarmOS site who is 
 
 ## Future Work
 
-* Publish Docker image and update readme to make "getting started" instructions above use that image
-* Add documentation for how to run via docker-compose with the rest of FarmOS
 * Improve extent handling
 * Support GeometryCollection features
 * See whether it is possible to model area_type field on features as an enum that QGIS would honor
