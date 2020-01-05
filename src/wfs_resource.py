@@ -559,8 +559,11 @@ class WfsOnePointZeroResource(Resource):
                     wfs_read_transaction_failures.append(CommitOutcomeItem(layer_def=layer_def, handle=handle, data="Received invalid feature to insert with {} geometries".format(len(geos))))
                     return
 
-                # TODO: Catch exceptions from invalid geometry
-                geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
+                try:
+                    geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
+                except:
+                    formatted_exception = logging.traceback.format_exc()
+                    wfs_read_transaction_failures.append(CommitOutcomeItem(layer_def=layer_def, handle=handle, data="Received invalid feature to insert with unreadable geometry: " + formatted_exception))
 
                 # TODO: Validate/normalize srs
 
@@ -612,10 +615,13 @@ class WfsOnePointZeroResource(Resource):
 
                         if len(geos) != 1:
                             wfs_read_transaction_failures.append(CommitOutcomeItem(layer_def=layer_def, handle=handle, data="Received invalid feature update with {} geometries".format(len(geos))))
-                            continue
+                            return
 
-                        # TODO: Catch exceptions from invalid geometry
-                        geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
+                        try:
+                            geometry = ogr.CreateGeometryFromGML(etree.tostring(geos[0]).decode("utf-8"))
+                        except:
+                            formatted_exception = logging.traceback.format_exc()
+                            wfs_read_transaction_failures.append(CommitOutcomeItem(layer_def=layer_def, handle=handle, data="Received invalid feature update unreadable geometry: " + formatted_exception))
 
                         # TODO: Validate/normalize srs
                     else:
