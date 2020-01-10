@@ -105,7 +105,7 @@ class TxDrupalRestWsClient(object):
         result = yield _read_body_no_warn(response)
 
         if response.code != 201:
-            raise Exception("".join(map(str, ("Failed to create entity of type", entity_type, response.code, result))))
+            raise Exception(" ".join(map(str, ("Failed to create entity of type", entity_type, response.code, result))))
 
         return json.loads(result)
 
@@ -122,18 +122,20 @@ class TxDrupalRestWsClient(object):
         if response.code != 200:
             result = yield _read_body_no_warn(response)
 
-            raise Exception("".join(map(str, ("Failed to update entity of type", entity_type, response.code, result))))
+            raise Exception(" ".join(map(str, ("Failed to update entity of type", entity_type, response.code, result))))
 
     @defer.inlineCallbacks
     def delete_entity(self, entity_type, entity_id):
-        headers = yield self.get_authenticated_headers()
+        headers = yield self.get_authenticated_headers({'Content-Type': ['application/json']})
 
         response = yield self._tx_agent.request(b'DELETE',
             self.format_url('{entity_type}/{entity_id}', entity_type=entity_type, entity_id=entity_id),
             headers, None)
 
         if response.code != 200:
-            raise Exception("Failed to get entities of type: " + entity_type)
+            result = yield _read_body_no_warn(response)
+
+            raise Exception(" ".join(map(str, ("Failed to delete entity of type", entity_type, response.code, result))))
 
     def agent(self):
         return self._tx_agent
