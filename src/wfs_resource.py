@@ -713,7 +713,7 @@ class WfsOnePointZeroResource(Resource):
 
                 return [attr('handle', handle)]
 
-            return wfs.TransactionResponse(
+            return wfs.WFS_TransactionResponse(
                 nsAttr.xsi.schemaLocation("{ns.wfs} http://schemas.opengis.net/wfs/{WFS_PROTOCOL_VERSION}/wfs.xsd".format(ns=ns, WFS_PROTOCOL_VERSION=str(resource.version))),
                 wfs.TransactionResult(
                     wfs.Status(status),
