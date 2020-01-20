@@ -3,7 +3,7 @@
 
 # This file is available at the option of the licensee under:
 # Public domain
-# or licensed under X/MIT (LICENSE.TXT) Copyright 2019 Symbioquine <symbioquine@gmail.com>
+# or licensed under X/MIT (LICENSE.TXT) Copyright 2020 Symbioquine <symbioquine@gmail.com>
 
 FROM osgeo/gdal:alpine-normal-latest as builder
 

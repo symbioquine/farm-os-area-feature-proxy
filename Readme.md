@@ -32,7 +32,7 @@ Add the `area-feature-proxy` service to your [FarmOS docker-compose.yml](https:/
   area-feature-proxy:
     depends_on:
       - www
-    image: symbioquine/farm-os-area-feature-proxy:0.1.0
+    image: symbioquine/farm-os-area-feature-proxy:0.1.1
     command: --farm-os-url=http://www:80
     ports:
       - '5707:5707'
@@ -105,7 +105,7 @@ Run;
   area-feature-proxy:
     depends_on:
       - www
-    image: farm-os-area-feature-proxy:0.1.0
+    image: farm-os-area-feature-proxy:0.1.1
     command: --farm-os-url=http://www:80 --proxy-spec="ssl:5707:privateKey=/mnt/certs/key.pem:certKey=/mnt/certs/cert.pem"
     volumes:
       - './devcerts:/mnt/certs'

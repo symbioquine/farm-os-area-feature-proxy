@@ -295,6 +295,6 @@ class TxDrupalEntityPage(object):
 def _read_body_no_warn(response):
     with warnings.catch_warnings():
         # readBody has a buggy DeprecationWarning:
-        # hhttps://twistedmatrix.com/trac/ticket/8227
+        # https://twistedmatrix.com/trac/ticket/8227
         warnings.simplefilter('ignore', category=DeprecationWarning)
         return readBody(response)
