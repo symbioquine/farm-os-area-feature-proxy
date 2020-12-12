@@ -32,6 +32,8 @@ apk add --no-cache --virtual=build-dependencies \
     tiff-dev \
     zlib-dev && \
 
+apk add cmd:pip3 && \
+
 apk add --no-cache --virtual=run-dependencies \
     libxml2 \
     libxslt && \
