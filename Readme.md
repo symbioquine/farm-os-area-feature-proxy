@@ -1,5 +1,7 @@
 # farm-os-area-feature-proxy
 
+**WARNING: farm-os-area-feature-proxy is now deprecated in favor of [farmOS_wfs](https://github.com/symbioquine/farmOS_wfs) and will not be updated for farmOS 2.x.**
+
 farm-os-area-feature-proxy is a stand-alone proxy which makes a standard FarmOS installation accessible as a [Web Feature Service (WFS)](https://www.opengeospatial.org/standards/wfs) which can be used in programs such as [Quantum GIS](https://qgis.org).
 
 In practical terms, farm-os-area-feature-proxy provides bi-directional data flow between areas configured in FarmOS and vector feature layers in QGIS. This allows farm areas to be viewed/edited in the context of additional data with more powerful mapping tools than FarmOS currently provides.
